@@ -1,0 +1,458 @@
+from typing import Text
+import streamlit as st
+import io
+import base64
+import pandas as pd
+import numpy as np
+import time
+from datetime import date, datetime
+import re
+import unicodedata
+import xlsxwriter
+import openpyxl
+import os
+from IPython.display import display
+from converter import excel_csv, csv_excel
+from function import up, lower, remover_caracteres_especiais, aplicar_regex_df
+
+def b2b():
+    marca = 'AZ' ## ou AZ SESC B2B ou AZ/SESC
+    sheetname = 'itens_b2b'
+    planilha = 'input/itens.xlsx'
+    today = date.today().strftime('%d-%m-%Y')
+    cliente_tipo = 'B2B'
+
+    st.info("Simulador - CONEXIA B2B")
+    
+    #  29.271.264/0001-61
+    st.text('Exemplo: 29.271.264/0001-61')
+    cliente = st.text_input('Digite o CNPJ da escola:', placeholder='Exemplo: 10.100.100/0001-10')
+
+    # Carrega o arquivo
+    file = st.file_uploader("Selecione um arquivo Excel", type=["xlsx"])
+    
+    if file is not None:
+        df_simul = pd.read_excel(file, sheet_name='cálculos Anual')
+        #df_simul = df_simul.assign(Bimestre="ANUAL")
+        df_simul.replace(0, np.nan, inplace=True)
+        up(df_simul)
+        
+
+        # Loop para aplicar as transformações em todas as colunas
+        for col in df_simul.columns:
+            df_simul.columns = df_simul.columns.str.strip().str.replace(r'[\s\n]', '', regex=True)
+        df_simul = df_simul[df_simul['QUANTIDADEDEALUNOS']>0]
+        df_simul = df_simul[['SQUAD','SÉRIE','SEGMENTO','PLATAFORMAAZBLUE','MATERIAISIMPRESSOSAZBLUE','PLATAFORMAAZ','MATERIAISIMPRESSOSAZ','CONSTRUINDOAALFABETIZAÇÃO','CANTALELÊ','MUNDOLEITOR','4AVALIAÇÕESNACIONAIS','1SIMULADOENEM','5SIMULADOSENEM','1SIMULADOREGIONAL','ITINERÁRIOSFORMATIVOSMICROCURSOS(2IF)','H5-(3HORAS)LANGUAGEBOOK+CLILEPBL','H5-(2HORAS)INTERNATIONALJOURNEY+APPH5','H5PLUS(3HORASEXTRAS)','MYLIFE(BASE)','MYLIFE(2024)','BINOCULOBYTELLME(BASE)','EDUCACROSSED.INFANTIL(BASE)','EDUCACROSS(BASE)','EDUCACROSSAZ(BASE)','EDUCACROSSH5(BASE)','UBBU(BASE)','BINOCULOBYTELLME(2024)','EDUCACROSSED.INFANTIL(2024)','EDUCACROSS(2024)','EDUCACROSSAZ(2024)','EDUCACROSSH5(2024)','UBBU(2024)','ÁRVORE(1MÓDULO)','ÁRVORE(2MÓDULOS)','BRITANNICA','SCHOOLGUARDIAN','TINDIN','SCHOLASTICEARLYBIRDANDBOOKFLIX','SCHOLASTICLITERACYPRO','LIVRODEINGLÊS','APROVARÁPIDO','APRENDERÁPIDO','ALURASTART','%DESCONTOVOLUME','%DESCONTOEXTRA','%DESCONTOTOTAL','TOTALALUNO/ANOCOMDESCONTO+COMPLEMENTARES','QUANTIDADEDEALUNOS','CNPJ']]
+
+
+        simulador = df_simul.copy()
+        df_cliente = simulador.loc[simulador['CNPJ'] == cliente]
+        df_cliente = df_cliente.fillna(0)
+
+
+        # Loop para aplicar a transformação a todas as colunas
+        nao_aplica = ['SQUAD','%DESCONTOVOLUME','%DESCONTOEXTRA','%DESCONTOTOTAL','QUANTIDADEDEALUNOS','SÉRIE','SEGMENTO','CNPJ']
+        for col in df_cliente.columns:
+            if col not in nao_aplica:
+                df_cliente[col] = df_cliente[col].where(df_cliente[col] == 0, 1)
+        #st.dataframe(df_cliente)
+
+        substituicoes_segmento = {
+            'ED. INFANTIL': 'INFANTIL',
+            'FUND. ANOS INICIAIS': 'FUNDAMENTAL ANOS INICIAIS',
+            'FUND. ANOS FINAIS': 'FUNDAMENTAL ANOS FINAIS',
+            'ENSINO MÉDIO': 'ENSINO MÉDIO',  # Essa linha é redundante, mas mantida para consistência
+            'PV': 'PRÉ VESTIBULAR'
+        }
+        # Aplicando as substituições em 'SEGMENTO'
+        df_cliente['SEGMENTO'] = df_cliente['SEGMENTO'].replace(substituicoes_segmento, regex=True)
+        df_cliente=df_cliente.assign(EXTRA="")
+
+
+        substituicoes_anos = {
+             'GRUPO 1': '1 ANO',
+             'GRUPO 2': '2 ANOS',
+             'GRUPO 3': '3 ANOS',
+             'GRUPO 4': '4 ANOS',
+             'GRUPO 5': '5 ANOS',
+        }
+
+        df_cliente['SÉRIE'] = df_cliente['SÉRIE'].replace(substituicoes_anos, regex=True)
+
+
+########### regra do AZ e Plataforma #########
+        df_cliente.loc[(df_cliente['PLATAFORMAAZ'] == 1) & (df_cliente['MATERIAISIMPRESSOSAZ'] == 1), ['PLATAFORMAAZ']] = 0
+
+
+############# regra do h5 ###############
+        df_cliente.loc[(df_cliente['H5PLUS(3HORASEXTRAS)'] == 1) & (df_cliente['H5-(2HORAS)INTERNATIONALJOURNEY+APPH5'] == 1), ['H5-(2HORAS)INTERNATIONALJOURNEY+APPH5','H5-(3HORAS)LANGUAGEBOOK+CLILEPBL']] = 0
+        df_cliente.loc[(df_cliente['H5PLUS(3HORASEXTRAS)'] == 1) & (df_cliente['H5-(3HORAS)LANGUAGEBOOK+CLILEPBL'] == 1), ['H5-(2HORAS)INTERNATIONALJOURNEY+APPH5','H5-(3HORAS)LANGUAGEBOOK+CLILEPBL']] = 0
+        df_cliente.loc[(df_cliente['H5-(2HORAS)INTERNATIONALJOURNEY+APPH5'] == 1) & (df_cliente['H5-(3HORAS)LANGUAGEBOOK+CLILEPBL'] == 1), ['H5-(3HORAS)LANGUAGEBOOK+CLILEPBL']] = 0
+        ####
+########## END REGRAS ############
+
+        df_client = df_cliente.copy()
+
+        for col in df_client.columns:
+            if col not in nao_aplica:
+                df_client[col] = df_client[col].where(df_client[col] == 0, col)
+        #st.dataframe(df_client)
+
+        produtos = ['PLATAFORMAAZBLUE', 'MATERIAISIMPRESSOSAZBLUE',
+                    'PLATAFORMAAZ', 'MATERIAISIMPRESSOSAZ', 'CONSTRUINDOAALFABETIZAÇÃO',
+                    'CANTALELÊ', 'MUNDOLEITOR', '4AVALIAÇÕESNACIONAIS', '1SIMULADOENEM',
+                    '5SIMULADOSENEM', '1SIMULADOREGIONAL',
+                    'ITINERÁRIOSFORMATIVOSMICROCURSOS(2IF)',
+                    'H5-(3HORAS)LANGUAGEBOOK+CLILEPBL',
+                    'H5-(2HORAS)INTERNATIONALJOURNEY+APPH5', 'H5PLUS(3HORASEXTRAS)',
+                    'MYLIFE(BASE)', 'MYLIFE(2024)', 'BINOCULOBYTELLME(BASE)',
+                    'EDUCACROSSED.INFANTIL(BASE)', 'EDUCACROSS(BASE)', 'EDUCACROSSAZ(BASE)',
+                    'EDUCACROSSH5(BASE)', 'UBBU(BASE)', 'BINOCULOBYTELLME(2024)',
+                    'EDUCACROSSED.INFANTIL(2024)', 'EDUCACROSS(2024)', 'EDUCACROSSAZ(2024)',
+                    'EDUCACROSSH5(2024)', 'UBBU(2024)', 'ÁRVORE(1MÓDULO)',
+                    'ÁRVORE(2MÓDULOS)', 'BRITANNICA', 'SCHOOLGUARDIAN', 'TINDIN',
+                    'SCHOLASTICEARLYBIRDANDBOOKFLIX', 'SCHOLASTICLITERACYPRO',
+                    'LIVRODEINGLÊS', 'APROVARÁPIDO', 'APRENDERÁPIDO', 'ALURASTART',
+                    ]
+
+            
+        for item in produtos:
+            df_client.loc[df_client[item] == 1.0, item] = item
+        COLUNAS = ['SQUAD','SÉRIE', 'SEGMENTO','%DESCONTOVOLUME', 'QUANTIDADEDEALUNOS', 'CNPJ','%DESCONTOEXTRA','%DESCONTOTOTAL',]
+        p = pd.DataFrame(columns=COLUNAS)
+
+        for i in produtos:
+            data = df_client[df_client[i] == i].groupby(['SQUAD','SÉRIE', 'SEGMENTO','%DESCONTOVOLUME','%DESCONTOEXTRA','%DESCONTOTOTAL','QUANTIDADEDEALUNOS', 'CNPJ', i])['EXTRA'].count().reset_index()
+            data = data.rename(columns={i: 'PRODUTO'})
+            p = pd.concat([p,data])
+        p = p.sort_values(by=['SÉRIE'])
+        p = p.reset_index()
+        p = p.drop(columns=['index'])
+        p = p.drop_duplicates()
+        up(p)
+
+        
+        #st.dataframe(p)
+
+
+        df_itens = pd.read_excel(planilha, sheet_name=sheetname)
+        df_itens = df_itens[['MARCA','NOME2025','PRODUTO','ITEM2025','DESCRIÇÃO MAGENTO (B2C e B2B)','BIMESTRE','SEGMENTO','SÉRIE','PÚBLICO','TIPO DE FATURAMENTO']]
+        up(df_itens)
+        #st.dataframe(df_itens)
+        #print(df_itens.SÉRIE.unique())
+
+        nome_marcas = {
+                    'HIGH FIVE NG': 'HIGH FIVE',
+                    'PREMIUM/UNIQUE': 'PREMIUM'
+                        }
+
+        # Substituindo as marcas com base no dicionário
+        df_itens['MARCA'] = df_itens['MARCA'].replace(nome_marcas)
+            
+
+        df_itens = df_itens[(df_itens['MARCA'] == marca) | (df_itens['MARCA'] == 'AZ BLUE') | (df_itens['MARCA'] == 'CONEXIA') | (df_itens['MARCA'] == 'MUNDO LEITOR') | (df_itens['MARCA'] == 'MY LIFE')| (df_itens['MARCA'] == 'HIGH FIVE')]
+        pdt = pd.merge(p, df_itens, on=['SÉRIE','PRODUTO'], how='inner')
+        pdt = pdt[['SQUAD','SÉRIE','BIMESTRE','%DESCONTOVOLUME', 'QUANTIDADEDEALUNOS', 'CNPJ', '%DESCONTOEXTRA','%DESCONTOTOTAL', 'PRODUTO', 'EXTRA', 'MARCA', 'NOME2025','ITEM2025', 'DESCRIÇÃO MAGENTO (B2C E B2B)', 'SEGMENTO_y','TIPO DE FATURAMENTO']]
+        pdt = pdt.rename(columns={'SEGMENTO_y':'SEGMENTO'})
+        #st.dataframe(pdt)
+        #pdt.to_excel('output/pdt.xlsx')
+           
+
+        pd_serial = pd.read_excel(planilha, sheet_name='serial')
+        #st.dataframe(pd_serial)
+
+        pdt = pd.merge(pdt, pd_serial, on=['SÉRIE','BIMESTRE'], how='inner')
+        pdt.to_excel('output/erro.xlsx')
+        #st.dataframe(pdt)
+
+        pdt['ANO'] = '2025'
+        pdt['SKU'] = pdt['ANO'] + pdt['SERIAL']
+        #st.text(pdt.columns)
+
+
+        pd_cust_group = pd.read_excel(planilha, sheet_name='nome')
+        #st.dataframe(pd_serial)
+
+
+        df_pdt = pdt.copy()
+        df_pdt = pd.merge(df_pdt, pd_cust_group, on=['CNPJ'], how='inner')
+        #st.dataframe(df_pdt)
+
+        serie = df_pdt['SÉRIE'].unique()
+        #st.text(serie)
+        pdt_final = []
+
+############### Regras de nome da MARCA ###################
+
+        for i in serie:
+            pdt_serie = df_pdt.loc[pdt['SÉRIE'] == i]
+            #pdt_serie = pdt_serie[~((pdt_serie['MARCA'] == 'CONEXIA') & (pdt_serie['BIMESTRE'].str.contains('BIMESTRE')))]
+            #pdt_serie = pdt_serie[~((pdt_serie['MARCA'] == 'MY LIFE') & (pdt_serie['BIMESTRE'].str.contains('BIMESTRE')))]
+                
+            if (pdt_serie['MARCA'].str.contains('AZ').any()):
+                pdt_serie = pdt_serie[~((pdt_serie['MARCA'] == 'CONEXIA') & (pdt_serie['BIMESTRE'].str.contains('ANUAL')))]
+                pdt_serie = pdt_serie[~((pdt_serie['MARCA'] == 'AZ') & (pdt_serie['BIMESTRE'].str.contains('ANUAL')))]
+                pdt_serie = pdt_serie[~((pdt_serie['MARCA'] == 'MY LIFE') & (pdt_serie['BIMESTRE'].str.contains('BIMESTRE')))]
+                pdt_serie = pdt_serie[~((pdt_serie['MARCA'] == 'MY LIFE') & (pdt_serie['BIMESTRE'].str.contains('ANUAL')))]
+                pdt_serie['MARCA'] = pdt_serie['MARCA'].str.replace('MY LIFE','AZ')
+                pdt_serie['MARCA'] = pdt_serie['MARCA'].str.replace('CONEXIA','AZ')
+                pdt_serie['MARCA'] = pdt_serie['MARCA'].str.replace('MUNDO LEITOR','AZ')
+
+            else:
+                pdt_serie = pdt_serie[~((pdt_serie['MARCA'] == 'CONEXIA') & (pdt_serie['BIMESTRE'].str.contains('BIMESTRE')))]
+                pdt_serie['MARCA'] = pdt_serie['MARCA'].str.replace('CONEXIA','HIGH FIVE')
+                #pdt_serie
+                # 
+            if (pdt_serie['MARCA'].str.contains('MY LIFE').any()):
+                    pdt_serie = pdt_serie[~((pdt_serie['MARCA'] == 'MY LIFE') & (pdt_serie['BIMESTRE'].str.contains('BIMESTRE')))]
+
+            if (pdt_serie['MARCA'].str.contains('HIGH FIVE').any()):
+                pdt_serie.loc[(pdt_serie['BIMESTRE'] == 'ANUAL') & (pdt_serie['MARCA'] == 'CONEXIA'), ['MARCA']] = 'HIGH FIVE'
+                if (pdt_serie['MARCA'].str.contains('MY LIFE').any()):
+                    pdt_serie.loc[(pdt_serie['BIMESTRE'] == 'ANUAL') & (pdt_serie['MARCA'] == 'CONEXIA'), ['MARCA']] = 'HIGH FIVE'
+                    pdt_serie.loc[(pdt_serie['BIMESTRE'] == 'ANUAL') & (pdt_serie['MARCA'] == 'MY LIFE'), ['MARCA']] = 'HIGH FIVE'
+
+            if (pdt_serie['MARCA'].str.contains('MY LIFE').any()):
+                    pdt_serie.loc[(pdt_serie['BIMESTRE'] == 'ANUAL') & (pdt_serie['MARCA'] == 'CONEXIA'), ['MARCA']] = 'MY LIFE'
+                    pdt_serie.loc[(pdt_serie['BIMESTRE'] == 'ANUAL') & (pdt_serie['MARCA'] == 'MY LIFE'), ['MARCA']] = 'MY LIFE'
+                
+            pdt_final.append(pdt_serie)
+            pdt_full = pd.concat(pdt_final)
+
+############## VERIFICAR PARA TIRAR O ANuAL E DEIXAR APENAS BIMESTRES
+        #pdt#_full = pdt_full[~((pdt_full['Marca'] == 'AZ') & (pdt_full['Bimestre'].str.contains('ANUAL')))]
+        #pdt = pdt_full.copy()
+            
+############# END REGRAS ############
+
+        pdt_full['NOME'] = 'SOLUÇÃO ' + pdt_full['MARCA']  + ' - ' + pdt_full['ESCOLA'] + ' - ' + pdt_full['SEGMENTO'] + ' - ' + pdt_full['SÉRIE'] + ' - ' + pdt_full['BIMESTRE']
+        pdt_full['SKU'] = pdt_full['ESCOLA'] + '2024' + pdt_full['MARCA'] + pdt_full['SERIAL']
+        pdt_full['SKU'] = pdt_full['SKU'].str.replace(' ','')
+        pdt_full = pdt_full.drop_duplicates()
+        pdt_full['PUBLICO'] = 'ALUNO'
+        pdt_full['ITEM2025'] =  pdt_full['ITEM2025'].astype('string') + ','
+        
+        #st.dataframe(pdt_full)
+        
+        df_operacoes = pdt_full[['ESCOLA','CNPJ','ANO','MARCA','SERIAL','SEGMENTO','SÉRIE','BIMESTRE','PUBLICO','SKU','NOME','ITEM2025','DESCRIÇÃO MAGENTO (B2C E B2B)','QUANTIDADEDEALUNOS','%DESCONTOVOLUME','%DESCONTOEXTRA','%DESCONTOTOTAL','CUSTOMER GROUP','SQUAD']]
+        
+        nome_escola = df_operacoes['ESCOLA'].unique()
+        if len(nome_escola) == 1:
+            nome_escola = nome_escola[0]
+
+        #df_operacoes.to_excel('output/df_operacoes.xlsx')   
+        #st.text(df_operacoes.columns)
+        #st.dataframe(df_operacoes)
+        
+        #df_operacoes.to_excel(f'output/{nome_escola}-df_operacoes.xlsx')
+
+######### SOLUÇÃO 
+
+        df_solucao = pdt_full.copy()
+        #st.dataframe(df_solucao)
+
+        df_solucao = df_solucao.groupby(['PUBLICO','NOME','SKU','ANO','MARCA','SÉRIE','BIMESTRE','TIPO','CUSTOMER GROUP'])['ITEM2025'].sum().reset_index()
+        df_solucao['visibilidade'] = 'N'
+        df_solucao['faturamento_produto'] = 'MATERIAL'  #Verificar com Elaine se podemos trazer o tipo conforme planilha ou todos serão MATERIAL
+        #df_solucao['cliente_produto'] = cliente_tipo
+        df_solucao['ativar_restricao'] = 'S'
+        df_solucao['utilizacao_produto'] = 'BIMESTRAL'
+        df_solucao['ITEM2025'] = df_solucao['ITEM2025'].apply(lambda x: x[:-1])
+
+
+        df_categoria = pd.read_excel(planilha, sheet_name='categoriab2b')
+        #st.dataframe(df_categoria)
+    
+
+        df_solucao = pd.merge(df_solucao,df_categoria, on=['SÉRIE'], how='inner')   ############ Merge de categorias 
+
+        df_solucao['CATEGORIA'] = df_solucao['MARCA'] +'/'+ df_solucao['CATEGORIA']
+
+        df_solucao = df_solucao.rename(columns={'PUBLICO':'grupo_de_atributo', 'NOME':'nome', 'CUSTOMER GROUP':'grupos_permissao',
+                                                'SKU':'sku', 'ANO':'ano_produto', 'MARCA':'marca_produto', 'SÉRIE':'serie_produto', 
+                                                'TIPO':'cliente_produto','CATEGORIA':'categorias','ITEM2025':'items','BIMESTRE':'periodo_produto'
+       })
+        
+        df_solucao['publico_produto'] = df_solucao['grupo_de_atributo']
+
+        df_solucao = df_solucao[['grupo_de_atributo', 'nome', 'sku', 'visibilidade', 'ano_produto', 'faturamento_produto','marca_produto','publico_produto',
+                                'serie_produto', 'utilizacao_produto','periodo_produto','cliente_produto','categorias', 'items','ativar_restricao','grupos_permissao' ]]
+
+        #st.text(df_solucao.columns)
+
+        #df_solucao.loc[(df_solucao['nome'].str.contains('BIMESTRE')) , ['periodo_produto']] = 'BIMESTRAL'
+        #df_solucao.loc[(df_solucao['nome'].str.contains('ANUAL')) , ['periodo_produto']] = 'ANUAL'
+        #df_solucao.loc[(df_solucao['nome'].str.contains('SEMESTRAL')) , ['periodo_produto']] = 'SEMESTRAL'
+        #df_solucao.loc[(df_solucao['serie_produto'].str.contains('Semi')) , ['periodo_produto']] = 'SEMESTRAL'
+
+        #st.dataframe(df_solucao)
+        #df_solucao.to_excel('output/df_solucao.xlsx')
+
+
+
+#################### BRINDE
+        df_brinde = df_operacoes[['ESCOLA','CNPJ','SKU','SÉRIE','BIMESTRE','DESCRIÇÃO MAGENTO (B2C E B2B)','ITEM2025','CUSTOMER GROUP']]
+        df_brinde['ITEM2025'] = df_brinde['ITEM2025'].apply(lambda x: x[:-1])
+        df_brinde['ITEM2025'] = df_brinde['ITEM2025'].astype('int64')
+    
+        df_brinde_input = pd.read_excel(planilha, sheet_name='brinde')
+        df_brinde = pd.merge(df_brinde,df_brinde_input, on=['ITEM2025'], how='inner')
+
+        df_brinde_final = df_brinde[['ESCOLA','SÉRIE_x','CUSTOMER GROUP','SKU_x','SKU_y','BIMESTRE_y']].copy()
+       
+        df_brinde_final['STATUS'] = 'ATIVO'
+        #st.dataframe(df_brinde_final)
+
+        infantil = ['1 ANO','2 ANOS','3 ANOS','4 ANOS','5 ANOS']
+        df_brinde_infantil = df_brinde_final.loc[df_brinde_final['SÉRIE_x'].isin(infantil)]
+        df_brinde_infantil['Qtd Incremento'] = 11
+        df_brinde_demais = df_brinde_final.loc[~df_brinde_final['SÉRIE_x'].isin(infantil)]
+        df_brinde_demais['Qtd Incremento'] = 20
+        df_brinde_concat = pd.concat([df_brinde_infantil,df_brinde_demais])
+        df_brinde_concat['Qtd Condicao'] = 1
+
+        df_brinde_concat['nome_da_regra'] = 'BRINDE DO PROF - ' + df_brinde_concat['ESCOLA'] + ' - ' + df_brinde_concat['SÉRIE_x'] + ' - ' + df_brinde_concat['BIMESTRE_y'] 
+        df_brinde_concat['nome_da_regra'] = df_brinde_concat.apply(lambda row: 'H5 - ' + row['nome_da_regra'] if 'HIGHFIVENG' in row['SKU_x'] else 'AZ - ' + row['nome_da_regra'], axis=1)
+
+        df_brinde_concat = df_brinde_concat.rename(columns= {'STATUS':'status','CUSTOMER GROUP':'grupo_do_cliente',
+                                                           'SKU_x':'sku_condicao','Qtd Condicao':'qtd_condicao','SKU_y':'sku_brinde','Qtd Incremento':'qtd_incremento'})
+        df_brinde_concat['id'] = ''
+        df_brinde_concat = df_brinde_concat[['id','nome_da_regra','status','grupo_do_cliente','sku_condicao','qtd_condicao','sku_brinde','qtd_incremento']]
+        #st.dataframe(df_brinde_concat)
+       
+
+############### PEDIDO PROGRAMADO ################
+### usad o apenas b2c #######
+        #df_programado = df_solucao.copy()
+#
+        #def ajustar_nome(df):
+        #    bimestres = [' - 1º BIMESTRE', ' - 2º BIMESTRE', ' - 3º BIMESTRE', ' - 4º BIMESTRE', ' - ANUAL']
+        #    for bimestre in bimestres:
+        #        df['nome'] = df['nome'].str.replace(bimestre, '')
+        #    return df
+        #
+        #ajustar_nome(df_programado)
+#
+        #df_programado = df_programado[['nome','sku']]
+        #df_programado['sku'] = df_programado['sku']+','
+        #df_programado = df_programado.groupby(['nome'])['sku'].sum().reset_index()
+        #df_programado['sku'] = df_programado['sku'].apply(lambda x: x[:-1])
+        #df_programado['enabled'] = 1
+        #df_programado = df_programado.rename(columns={'nome':'title'})
+        #df_programado = df_programado[['title','enabled','sku']]
+        #df_programado['title'] = df_programado['title'] + ' - ANUAL'
+#
+        ##st.dataframe(df_programado)
+
+         #operacao
+        st.divider()
+
+        with st.spinner('Aguarde...'):
+            time.sleep(3)
+
+        st.success('Concluído com sucesso!', icon="✅")
+        def convert_df(df):
+            # IMPORTANT: Cache the conversion to prevent computation on every rerun
+            return df.to_csv(index=False).encode('UTF-8')
+            
+            
+        #col1, col2, col3, col4= st.columns(4)
+        col1, col2, col3= st.columns(3)
+            
+                
+        with col1:
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_solucao.to_excel(writer, index=False, sheet_name='Sheet1')
+            # Configurar os parâmetros para o botão de download
+            st.download_button(
+                label="Download Solução (XLSX)",
+                data=output.getvalue(),
+                file_name=f'{today}-{nome_escola}-solucao.xlsx',
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            solucao = convert_df(df_solucao)
+
+            st.download_button(
+            label="Download Solução (CSV) ",
+                data=solucao,
+                file_name=f'{today}-{nome_escola}-solucao_import.csv',
+                mime='text/csv'
+            )
+
+        with col2:
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_operacoes.to_excel(writer, index=False, sheet_name='Sheet1')
+            # Configurar os parâmetros para o botão de download
+            st.download_button(
+                label="Download Controle - operações (XLSX)",
+                data=output.getvalue(),
+                file_name=f'{today}-{nome_escola}-controle.xlsx',
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            operar = convert_df(df_operacoes)
+            st.download_button(
+            label="Download Controle - operações (CSV) ",
+                data=solucao,
+                file_name=f'{today}-{nome_escola}-controle_import.csv',
+                mime='text/csv'
+            )
+
+        with col3:
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_brinde_concat.to_excel(writer, index=False, sheet_name='Sheet1')
+            # Configurar os parâmetros para o botão de download
+            st.download_button(
+                label="Download do brinde (XLSX)",
+                data=output.getvalue(),
+                file_name=f'{today}-{nome_escola}-brinde.xlsx',
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            df_brinde_csv= convert_df(df_brinde_concat)
+            st.download_button(
+            label="Download do brinde (CSV)",
+                data=df_brinde_csv,
+                file_name=f'{today}-{nome_escola}-brinde_import.csv',
+                mime='text/csv'
+            )
+        #with col4:
+        #    output = io.BytesIO()
+        #    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        #        df_programado.to_excel(writer, index=False, sheet_name='Sheet1')
+        #    # Configurar os parâmetros para o botão de download
+        #    st.download_button(
+        #        label="Download do p. programado (XLSX)",
+        #        data=output.getvalue(),
+        #        file_name=f'{today}-{nome_escola}-p_programado.xlsx',
+        #        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        #    )
+        #    df_prog= convert_df(df_programado)
+        #    st.download_button(
+        #    label="Download do p. programado (CSV)",
+        #        data=df_prog,
+        #        file_name=f'{today}-{nome_escola}-p_programado_import.csv',
+        #        mime='text/csv'
+        #    )
+         
+            
+                            
+
+
+##########################################################################################################################################################
+##########################################################################################################################################################
+
+
+        ###### DEBUG COM FILTRO
+        st.divider()
+        st.write(f'Resultado: {nome_escola}')
+        df_operacoes['ITEM2025'] = df_operacoes['ITEM2025'].apply(lambda x: x[:-1])
+        filter = df_operacoes[['MARCA','SÉRIE','BIMESTRE','NOME','DESCRIÇÃO MAGENTO (B2C E B2B)','QUANTIDADEDEALUNOS','ITEM2025','CUSTOMER GROUP']]
+        selected = st.selectbox('Selecione a série:', ['',*filter['SÉRIE'].unique()])
+        if selected:
+            selected_serie = filter[filter['SÉRIE'] == selected]
+            st.dataframe(selected_serie)
+        else:
+            st.dataframe(filter)
+        ##################
