@@ -1,6 +1,4 @@
-# README: Simulador CONEXIA B2B
-
-## Descrição
+# README: Loja B2B e B2C
 Este projeto é um simulador para a análise e processamento de dados no contexto particular. Ele utiliza o framework **Streamlit** para criar uma interface interativa, permitindo que usuários carreguem e manipulem arquivos Excel, apliquem regras específicas aos dados e visualizem resultados detalhados.
 
 ---
