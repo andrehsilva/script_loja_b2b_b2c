@@ -42,3 +42,6 @@ Este projeto é um simulador para a análise e processamento de dados no context
 ### Instale as dependências:
 ```bash
 pip install streamlit pandas numpy openpyxl xlsxwriter ipython
+
+![Captura de tela de 2025-01-06 20-40-25](https://github.com/user-attachments/assets/192a94fb-ce0f-46b2-ba77-685e9fc0fd01)
+
